@@ -1,0 +1,5 @@
+pyrofork==2.3.69
+TgCrypto==1.2.5
+fastapi==0.162.0
+uvicorn==0.54.0
+python-multipart==0.0.32

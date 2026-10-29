@@ -1,0 +1,25 @@
+# Portainer: Stacks > Add stack > Repository, compose path docker-compose.yaml.
+# Set the environment variables below in Portainer's "Environment variables" section.
+services:
+  telegram-arr-bridge:
+    image: ghcr.io/ausyp/telegram-arr-bridge:latest
+    container_name: telegram-arr-bridge
+    restart: unless-stopped
+    stdin_open: true
+    tty: true
+    ports:
+      - "${BRIDGE_PORT:-8765}:8765"
+    environment:
+      API_ID: ${API_ID}
+      API_HASH: ${API_HASH}
+      BRIDGE_API_KEY: ${BRIDGE_API_KEY}
+      BOTS: ${BOTS}
+      COMPLETE_DIR: ${COMPLETE_DIR:-/downloads/complete}
+      TZ: ${TZ:-UTC}
+    volumes:
+      - bridge-data:/data
+      # Must be the same folder, at the same path, that Radarr sees.
+      - ${DOWNLOADS_PATH:-/srv/downloads}:/downloads
+
+volumes:
+  bridge-data:
