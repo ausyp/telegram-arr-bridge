@@ -3,6 +3,7 @@ line-length = 120
 target-version = "py312"
 
 [tool.pytest.ini_options]
+pythonpath = ["."]
 filterwarnings = ["ignore::DeprecationWarning"]
 
 [tool.ruff.lint]
