@@ -8,6 +8,7 @@ RUN apt-get update \
  && apt-get purge -y gcc libc6-dev && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
 
 COPY bridge ./bridge
+COPY docker-entrypoint.sh /usr/local/bin/
 
 ENV DATA_DIR=/data \
     COMPLETE_DIR=/downloads/complete \
@@ -15,4 +16,5 @@ ENV DATA_DIR=/data \
     PYTHONUNBUFFERED=1
 VOLUME ["/data"]
 EXPOSE 8765
+ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["python", "-m", "bridge.main"]

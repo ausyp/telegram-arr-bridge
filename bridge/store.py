@@ -60,9 +60,11 @@ class Store:
             row = self._db.execute("SELECT body FROM releases WHERE guid = ?", (guid,)).fetchone()
         return Release(**json.loads(row[0])) if row else None
 
-    def recent_releases(self, limit: int = 100) -> list[Release]:
+    def recent_releases(self, limit: int = 100, since: float = 0.0) -> list[Release]:
         with self._lock:
-            rows = self._db.execute("SELECT body FROM releases ORDER BY created DESC LIMIT ?", (limit,)).fetchall()
+            rows = self._db.execute(
+                "SELECT body FROM releases WHERE created >= ? ORDER BY created DESC LIMIT ?", (since, limit)
+            ).fetchall()
         return [Release(**json.loads(r[0])) for r in rows]
 
     def put_job(self, j: Job) -> None:
@@ -86,4 +88,18 @@ class Store:
     def delete_job(self, nzo_id: str) -> None:
         with self._lock:
             self._db.execute("DELETE FROM jobs WHERE nzo_id = ?", (nzo_id,))
+            self._db.commit()
+
+    def prune(self, before: float) -> None:
+        """Drop finished jobs, and releases no job uses, that are older than `before`."""
+        with self._lock:
+            self._db.execute(
+                "DELETE FROM jobs WHERE created < ? AND json_extract(body, '$.status') IN ('Completed', 'Failed')",
+                (before,),
+            )
+            self._db.execute(
+                "DELETE FROM releases WHERE created < ?"
+                " AND guid NOT IN (SELECT json_extract(body, '$.guid') FROM jobs)",
+                (before,),
+            )
             self._db.commit()
