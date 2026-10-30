@@ -15,6 +15,7 @@ class Settings:
     api_key: str = ""
     bots: list[str] = field(default_factory=list)
     allowed_users: list[str] = field(default_factory=list)
+    command_bot_token: str = ""
     data_dir: str = "/data"
     complete_dir: str = "/downloads/complete"
     categories: list[str] = field(default_factory=list)
@@ -37,6 +38,7 @@ class Settings:
             api_key=env("BRIDGE_API_KEY", ""),
             bots=_list(env("BOTS", "")),
             allowed_users=_list(env("ALLOWED_USERS", "")),
+            command_bot_token=env("COMMAND_BOT_TOKEN", ""),
             data_dir=env("DATA_DIR", "/data"),
             complete_dir=env("COMPLETE_DIR", "/downloads/complete"),
             categories=_list(env("CATEGORIES", "movies,radarr,tv,sonarr")),

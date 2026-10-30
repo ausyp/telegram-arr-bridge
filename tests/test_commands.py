@@ -107,3 +107,16 @@ def test_others_are_ignored(tmp_path):
     # The account's own message in someone else's chat isn't a command for us.
     assert send(src, msg("/removebot SomeMovieBot", 999, outgoing=True, chat_id=5)) == []
     assert store.bots() == ["SomeMovieBot"]
+
+
+def test_command_bot_tells_strangers_their_id(tmp_path):
+    src, store = make(tmp_path)
+    src.command_bot = bot = object()
+    m = msg("/addbot newbot", 222)
+    asyncio.run(src._on_command(bot, m))
+    assert m.replies == ["You can't manage bots yet. Add your user id 222 to ALLOWED_USERS."]
+    assert store.bots() == ["SomeMovieBot"]
+
+    m = msg("/start", 111)
+    asyncio.run(src._on_command(bot, m))
+    assert m.replies == [commands.HELP]
