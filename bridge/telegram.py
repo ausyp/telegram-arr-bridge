@@ -16,6 +16,7 @@ from collections.abc import Callable
 
 from pyrogram import Client, errors, filters
 from pyrogram.handlers import MessageHandler
+from pyrogram.raw import functions
 from pyrogram.raw import types as raw
 
 from . import commands
@@ -89,6 +90,9 @@ class TelegramSource:
                     if self.store:
                         self.client.add_handler(MessageHandler(self._on_command, filters.private & filters.text))
                     me = await self.client.get_me()
+                    self.client.me = me
+                    # Telegram only pushes new messages (our commands) after this call; start() would make it.
+                    await self.client.invoke(functions.updates.GetState())
                     log.info("Telegram connected as %s", me.username or me.id)
                     self.ready = True
                     return

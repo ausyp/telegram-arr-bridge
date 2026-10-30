@@ -259,6 +259,7 @@ class StuckClient:
     def __init__(self):
         self.is_connected = self.is_initialized = False
         self.connects = 0
+        self.invoked = []
 
     async def connect(self):
         if self.is_connected:
@@ -275,6 +276,9 @@ class StuckClient:
             raise errors.AuthKeyUnregistered()
         return NS(username="me", id=1)
 
+    async def invoke(self, query):
+        self.invoked.append(type(query).__name__)
+
     async def terminate(self):
         raise RuntimeError("watchdog failed")
 
@@ -289,3 +293,5 @@ def test_reconnects_after_failed_shutdown(tmp_path, monkeypatch):
     src = TelegramSource(Settings(data_dir=str(tmp_path)), client=client)
     asyncio.run(src.connect_forever())
     assert src.ready and client.connects == 2
+    # Without this Telegram never sends the account new messages, so commands go unanswered.
+    assert client.invoked == ["GetState"]
