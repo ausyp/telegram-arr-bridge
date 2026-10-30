@@ -55,6 +55,15 @@ def _buttons(msg):
         yield from row
 
 
+def _use_running_loop(client) -> None:
+    """Clients are made before uvicorn starts its event loop, so pyrogram picked up a different one.
+    Its dispatcher would then queue update handlers on a loop that never runs, and no message
+    (our commands) would ever be handled."""
+    loop = asyncio.get_running_loop()
+    if hasattr(client, "dispatcher"):
+        client.loop = client.dispatcher.loop = loop
+
+
 def _media(msg):
     return msg.document or msg.video or None
 
@@ -94,6 +103,7 @@ class TelegramSource:
         """Wait until the session is logged in, then stay connected."""
         while not self.ready:
             try:
+                _use_running_loop(self.client)
                 authorized = await self.client.connect()
                 if authorized:
                     await self.client.initialize()
@@ -158,6 +168,7 @@ class TelegramSource:
         if bot is None or bot.is_connected:
             return
         try:
+            _use_running_loop(bot)
             await bot.start()
             bot.add_handler(MessageHandler(self._on_command, filters.private & filters.text))
             await bot.set_bot_commands([BotCommand(c, d) for c, d in commands.MENU])
