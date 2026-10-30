@@ -15,7 +15,9 @@ log = logging.getLogger(__name__)
 
 
 def safe_name(name: str) -> str:
-    return re.sub(r'[\\/:*?"<>|]+', " ", name).strip() or "download"
+    name = re.sub(r'[\\/:*?"<>|\x00-\x1f]+', " ", name).strip()
+    # "." and ".." would point at the parent folder.
+    return name if name.strip(".") else "download"
 
 
 class Downloads:
@@ -91,6 +93,14 @@ class Downloads:
             self._live.pop(job.nzo_id, None)
             self._tasks.pop(job.nzo_id, None)
 
+    def _is_job_folder(self, path: str) -> bool:
+        """Only ever delete a release folder: complete/<category>/<release>."""
+        if not path or not os.path.isdir(path):
+            return False
+        root = os.path.realpath(self.s.complete_dir)
+        rel = os.path.relpath(os.path.realpath(path), root)
+        return not rel.startswith("..") and len(rel.split(os.sep)) == 2
+
     def get(self, nzo_id: str) -> Job | None:
         return self._live.get(nzo_id) or self.store.get_job(nzo_id)
 
@@ -103,6 +113,6 @@ class Downloads:
             task.cancel()
         job = self.get(nzo_id)
         self._live.pop(nzo_id, None)
-        if job and delete_files and job.path and os.path.isdir(job.path):
+        if job and delete_files and self._is_job_folder(job.path):
             shutil.rmtree(job.path, ignore_errors=True)
         self.store.delete_job(nzo_id)

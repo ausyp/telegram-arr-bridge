@@ -45,6 +45,11 @@ def make_router(app_state) -> APIRouter:
     router = APIRouter()
     s = app_state.settings
 
+    def wants_movies(params) -> bool:
+        # Only movies are indexed so far; a TV-only search (Sonarr) gets nothing.
+        cats = [c.strip() for c in (params.get("cat") or "").split(",") if c.strip()]
+        return not cats or any(c.startswith("2") for c in cats)
+
     def authorized(params) -> bool:
         return not s.api_key or params.get("apikey") == s.api_key
 
@@ -102,7 +107,7 @@ def make_router(app_state) -> APIRouter:
             return nzb(rel) if rel else _error(300, "No such item")
         if t in ("search", "movie"):
             q = (params.get("q") or "").strip()
-            if int(params.get("offset") or 0) > 0:
+            if int(params.get("offset") or 0) > 0 or not wants_movies(params):
                 return feed([])  # everything is returned on the first page
             if q:
                 releases = await app_state.source.search(q)
@@ -110,7 +115,8 @@ def make_router(app_state) -> APIRouter:
                     app_state.store.put_release(r)
             else:
                 # RSS: Radarr polls this and tests the indexer with it.
-                releases = app_state.store.recent_releases(50)
+                # Old callback buttons have usually expired, so only offer recent results.
+                releases = app_state.store.recent_releases(50, since=time.time() - s.rss_max_age)
                 if not releases:
                     return feed([PLACEHOLDER.replace("{ts}", formatdate(time.time()))])
             return feed([item_xml(r, base) for r in releases])

@@ -17,6 +17,7 @@ from pyrogram import Client, errors
 from pyrogram.raw import types as raw
 
 from .config import Settings
+from .downloads import safe_name
 from .parse import (
     is_join_button,
     is_retry_button,
@@ -28,6 +29,9 @@ from .parse import (
 from .store import Release
 
 log = logging.getLogger(__name__)
+
+# How long to stop trying a bot's inline mode after a transient error.
+INLINE_RETRY_AFTER = 600
 
 Progress = Callable[[int, int], None]
 
@@ -61,9 +65,12 @@ class TelegramSource:
         )
         self.ready = False
         self._locks: dict[str, asyncio.Lock] = {}
+        # Saved Messages is shared by every download, so only one may use it at a time.
+        self._me_lock = asyncio.Lock()
         self._last_used: dict[str, float] = {}
-        self._no_inline: set[str] = set()
+        self._no_inline: dict[str, float] = {}  # bot -> skip inline mode until this time
         self._cache: dict[str, tuple[float, list[Release]]] = {}
+        self._reconnect: asyncio.Task | None = None
 
     # ---- connection -------------------------------------------------------
 
@@ -82,13 +89,30 @@ class TelegramSource:
                 log.warning("Telegram session is not logged in. Run: python -m bridge.login")
             except Exception as e:
                 log.warning("Telegram connect failed: %s", e)
-                try:
-                    await self.client.disconnect()
-                except Exception:
-                    pass
+                await self._reset_client()
             await asyncio.sleep(15)
 
+    async def _reset_client(self) -> None:
+        try:
+            if self.client.is_initialized:
+                await self.client.terminate()
+            if self.client.is_connected:
+                await self.client.disconnect()
+        except Exception as e:
+            log.debug("Disconnect: %s", e)
+
+    async def _lost_auth(self, e: Exception) -> None:
+        """The session was revoked or logged out: report it and wait for a new login."""
+        if not self.ready:
+            return
+        self.ready = False
+        log.error("Telegram session is no longer authorized (%s). Run: python -m bridge.login", e)
+        await self._reset_client()
+        self._reconnect = asyncio.create_task(self.connect_forever())
+
     async def stop(self) -> None:
+        if self._reconnect:
+            self._reconnect.cancel()
         if self.ready:
             await self.client.stop()
 
@@ -123,13 +147,9 @@ class TelegramSource:
             return hit[1]
         results: list[Release] = []
         for q in filter(None, [query, strip_year(query)]):
-            for bot in self.s.bots:
-                try:
-                    results += await self._search_bot(bot, q)
-                except errors.FloodWait as e:
-                    log.warning("Flood wait from %s: %ss", bot, e.value)
-                except Exception:
-                    log.exception("Search failed on %s", bot)
+            # Bots are independent, so ask them all at once.
+            for found in await asyncio.gather(*(self._search_one(bot, q) for bot in self.s.bots)):
+                results += found
             if results:
                 break
         seen, unique = set(), []
@@ -137,13 +157,28 @@ class TelegramSource:
             if r.guid not in seen:
                 seen.add(r.guid)
                 unique.append(r)
-        self._cache[key] = (time.time(), unique)
+        now = time.time()
+        self._cache = {k: v for k, v in self._cache.items() if now - v[0] < self.s.search_cache_ttl}
+        # An empty result may just be a slow or rate-limited bot, so don't remember it.
+        if unique:
+            self._cache[key] = (now, unique)
         return unique
+
+    async def _search_one(self, bot: str, query: str) -> list[Release]:
+        try:
+            return await self._search_bot(bot, query)
+        except errors.FloodWait as e:
+            log.warning("Flood wait from %s: %ss", bot, e.value)
+        except errors.Unauthorized as e:
+            await self._lost_auth(e)
+        except Exception:
+            log.exception("Search failed on %s", bot)
+        return []
 
     async def _search_bot(self, bot: str, query: str) -> list[Release]:
         async with self._lock(bot):
             await self._pace(bot)
-            if self.s.use_inline and bot not in self._no_inline:
+            if self.s.use_inline and self._no_inline.get(bot, 0) < time.time():
                 found = await self._search_inline(bot, query)
                 if found is not None:
                     return found
@@ -152,9 +187,15 @@ class TelegramSource:
     async def _search_inline(self, bot: str, query: str) -> list[Release] | None:
         try:
             res = await self.client.get_inline_bot_results(bot, query)
+        except errors.Unauthorized:
+            raise
+        except errors.BotInlineDisabled:
+            log.info("%s has no inline mode, using chat", bot)
+            self._no_inline[bot] = float("inf")
+            return None
         except Exception as e:
-            log.info("Inline mode unavailable for %s (%s), using chat", bot, e)
-            self._no_inline.add(bot)
+            log.info("Inline search failed on %s (%s), using chat for %ss", bot, e, INLINE_RETRY_AFTER)
+            self._no_inline[bot] = time.time() + INLINE_RETRY_AFTER
             return None
         out = []
         for item in res.results:
@@ -233,10 +274,14 @@ class TelegramSource:
     async def fetch(self, rel: Release, dest_dir: str, progress: Progress) -> str:
         if not self.ready:
             raise FetchError("Telegram is not logged in")
-        async with self._lock(rel.bot):
-            await self._pace(rel.bot)
-            msg = await self._get_file_message(rel)
-        return await self._download(msg, rel, dest_dir, progress)
+        try:
+            async with self._lock(rel.bot):
+                await self._pace(rel.bot)
+                msg = await self._get_file_message(rel)
+            return await self._download(msg, rel, dest_dir, progress)
+        except errors.Unauthorized as e:
+            await self._lost_auth(e)
+            raise FetchError("Telegram session is no longer authorized") from e
 
     async def _get_file_message(self, rel: Release):
         bot = rel.bot
@@ -261,9 +306,10 @@ class TelegramSource:
         for item in res.results:
             doc = getattr(item, "document", None)
             if isinstance(doc, raw.Document) and str(doc.id) == rel.data:
-                marker = await self._last_id("me")
-                await self.client.send_inline_bot_result("me", res.query_id, item.id)
-                msg = await self._wait_for("me", marker, lambda m: _media(m) is not None, 30, mine=True)
+                async with self._me_lock:
+                    marker = await self._last_id("me")
+                    await self.client.send_inline_bot_result("me", res.query_id, item.id)
+                    msg = await self._wait_for("me", marker, lambda m: _media(m) is not None, 30, mine=True)
                 if msg:
                     return msg
         raise FetchError("inline result is no longer offered by the bot")
@@ -323,8 +369,11 @@ class TelegramSource:
     async def _wait_for(self, chat: str, after: int, ok, timeout: float, mine: bool = False):
         deadline = time.monotonic() + timeout
         last = None
+        delay = 1.0
         while time.monotonic() < deadline:
-            await asyncio.sleep(1.5)
+            await asyncio.sleep(delay)
+            # Most replies come within seconds; poll less often after that to spare the API.
+            delay = min(delay * 1.5, 5.0)
             if mine:
                 msgs = [m async for m in self.client.get_chat_history(chat, limit=5) if m.id > after]
             else:
@@ -342,7 +391,10 @@ class TelegramSource:
 
     async def _download(self, msg, rel: Release, dest_dir: str, progress: Progress) -> str:
         media = _media(msg)
-        fname = getattr(media, "file_name", None) or f"{rel.title}.mkv"
+        # The name comes from the bot, so keep it inside dest_dir.
+        fname = safe_name(os.path.basename(getattr(media, "file_name", None) or "")) if media else ""
+        if fname == "download":
+            fname = safe_name(f"{rel.title}.mkv")
         os.makedirs(dest_dir, exist_ok=True)
         # Bots often delete files after a few minutes, so keep a copy in Saved Messages.
         source, copy = msg, None
@@ -350,8 +402,11 @@ class TelegramSource:
             copy = msg  # already in Saved Messages; remove it afterwards
         else:
             try:
-                fwd = await self.client.forward_messages("me", msg.chat.id, msg.id)
+                async with self._me_lock:
+                    fwd = await self.client.forward_messages("me", msg.chat.id, msg.id)
                 source = copy = fwd[0] if isinstance(fwd, list) else fwd
+            except errors.Unauthorized:
+                raise
             except errors.RPCError:
                 pass  # protected content can't be forwarded; download directly
         try:

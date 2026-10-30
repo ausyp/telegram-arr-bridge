@@ -100,3 +100,33 @@ def test_sab_config_has_categories(client):
     cfg = client.get("/sabnzbd/api?mode=get_config&apikey=k").json()["config"]
     assert [c["name"] for c in cfg["categories"]] == ["*", "radarr"]
     assert client.get("/sabnzbd/api?mode=version&apikey=k").json()["version"]
+
+
+def test_tv_only_search_is_empty(client):
+    assert "<item>" not in client.get("/api?t=search&q=Aaru&cat=5000,5040&apikey=k").text
+    assert "<item>" in client.get("/api?t=search&q=Aaru&cat=2000,5000&apikey=k").text
+
+
+def test_rss_skips_old_results(client):
+    store = client.app.state.bridge.store
+    old = Release(guid="old1", title="Old Movie (2020) 720p", size=1, bot="b", kind="cb", data="x", query="q")
+    old.created = time.time() - 2 * 86400
+    store.put_release(old)
+    new = Release(guid="new1", title="New Movie (2026) 720p", size=1, bot="b", kind="cb", data="x", query="q")
+    store.put_release(new)
+    feed = client.get("/api?t=movie&apikey=k").text
+    assert "New Movie" in feed and "Old Movie" not in feed
+
+
+def test_dot_names_cannot_escape_the_folder(client, tmp_path):
+    client.get("/api?t=movie&q=Aaru&apikey=k")
+    r = client.get("/api?mode=addurl&name=http://x/api?id=abc123&nzbname=..&cat=..&apikey=k").json()
+    nzo = r["nzo_ids"][0]
+    for _ in range(50):
+        hist = client.get("/api?mode=history&apikey=k").json()["history"]["slots"]
+        if hist:
+            break
+        time.sleep(0.05)
+    assert hist[0]["storage"] == str(tmp_path / "complete" / "download" / "download")
+    client.get(f"/api?mode=history&name=delete&value={nzo}&del_files=1&apikey=k")
+    assert os.path.isdir(tmp_path / "complete")

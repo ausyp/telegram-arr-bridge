@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import os
+import time
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
@@ -27,13 +28,19 @@ def create_app(settings: Settings, source=None) -> FastAPI:
     store = Store(os.path.join(settings.data_dir, "bridge.db"))
     state = SimpleNamespace(settings=settings, store=store, source=source, downloads=None)
 
+    async def prune_daily() -> None:
+        while True:
+            store.prune(before=time.time() - settings.history_days * 86400)
+            await asyncio.sleep(86400)
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         state.downloads = Downloads(settings, store, source)
         state.downloads.resume()
-        connect = asyncio.create_task(source.connect_forever())
+        tasks = [asyncio.create_task(source.connect_forever()), asyncio.create_task(prune_daily())]
         yield
-        connect.cancel()
+        for t in tasks:
+            t.cancel()
         await source.stop()
 
     app = FastAPI(title="Telegram Arr Bridge", lifespan=lifespan)
@@ -43,6 +50,7 @@ def create_app(settings: Settings, source=None) -> FastAPI:
 
 
 def main() -> None:
+    os.umask(int(os.environ.get("UMASK", "002"), 8))
     logging.basicConfig(
         level=os.environ.get("LOG_LEVEL", "INFO").upper(),
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",

@@ -24,6 +24,8 @@ class Settings:
     max_downloads: int = 2
     search_cache_ttl: float = 3600.0
     use_inline: bool = True
+    rss_max_age: float = 86400.0
+    history_days: float = 30.0
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -43,4 +45,6 @@ class Settings:
             max_downloads=int(env("MAX_DOWNLOADS", "2")),
             search_cache_ttl=float(env("SEARCH_CACHE_TTL", "3600")),
             use_inline=env("USE_INLINE", "true").lower() in ("1", "true", "yes"),
+            rss_max_age=float(env("RSS_MAX_AGE_HOURS", "24")) * 3600,
+            history_days=float(env("HISTORY_DAYS", "30")),
         )
