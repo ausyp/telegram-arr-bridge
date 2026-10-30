@@ -4,6 +4,7 @@ Search: send the query to each bot (or use its inline mode) and turn the file
 buttons it replies with into releases.
 Fetch: press the chosen button, get past any "join these channels first" gate,
 and download the file the bot sends back.
+Commands: allowed users can add and remove bots by messaging this account (see commands.py).
 """
 
 import asyncio
@@ -13,9 +14,11 @@ import os
 import time
 from collections.abc import Callable
 
-from pyrogram import Client, errors
+from pyrogram import Client, errors, filters
+from pyrogram.handlers import MessageHandler
 from pyrogram.raw import types as raw
 
+from . import commands
 from .config import Settings
 from .downloads import safe_name
 from .parse import (
@@ -26,7 +29,7 @@ from .parse import (
     start_param,
     strip_year,
 )
-from .store import Release
+from .store import Release, Store
 
 log = logging.getLogger(__name__)
 
@@ -55,8 +58,9 @@ def _media(msg):
 
 
 class TelegramSource:
-    def __init__(self, settings: Settings, client: Client | None = None):
+    def __init__(self, settings: Settings, client: Client | None = None, store: Store | None = None):
         self.s = settings
+        self.store = store
         self.client = client or Client(
             "bridge",
             api_id=settings.api_id,
@@ -81,6 +85,9 @@ class TelegramSource:
                 authorized = await self.client.connect()
                 if authorized:
                     await self.client.initialize()
+                    # initialize() starts with no handlers, so add ours every time.
+                    if self.store:
+                        self.client.add_handler(MessageHandler(self._on_command, filters.private & filters.text))
                     me = await self.client.get_me()
                     log.info("Telegram connected as %s", me.username or me.id)
                     self.ready = True
@@ -115,6 +122,32 @@ class TelegramSource:
             self._reconnect.cancel()
         if self.ready:
             await self.client.stop()
+
+    # ---- commands ---------------------------------------------------------
+
+    async def _on_command(self, client, msg) -> None:
+        parsed = commands.parse(msg.text or "")
+        if not parsed:
+            return
+        user = msg.from_user
+        saved_messages = msg.outgoing and user and msg.chat.id == user.id
+        if not saved_messages and (msg.outgoing or not commands.is_allowed(user, self.s.allowed_users)):
+            if not msg.outgoing:
+                log.info("Ignored %s from %s (not in ALLOWED_USERS)", parsed[0], user and (user.username or user.id))
+            return
+        reply = await commands.run(*parsed, self.store, self._check_bot)
+        self.s.bots = self.store.bots()
+        self._cache.clear()
+        await msg.reply_text(reply, quote=True)
+
+    async def _check_bot(self, name: str) -> tuple[str | None, str | None]:
+        try:
+            user = await self.client.get_users(name)
+        except (errors.RPCError, KeyError, ValueError):
+            return None, f"Couldn't find @{name} on Telegram"
+        if not getattr(user, "is_bot", False):
+            return None, f"@{name} isn't a bot"
+        return user.username or name, None
 
     # ---- pacing -----------------------------------------------------------
 

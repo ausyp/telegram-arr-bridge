@@ -1,4 +1,4 @@
-"""SQLite store for search results (releases) and download jobs."""
+"""SQLite store for search results (releases), download jobs and the bots to search."""
 
 import json
 import sqlite3
@@ -44,6 +44,7 @@ class Store:
                 """
                 CREATE TABLE IF NOT EXISTS releases (guid TEXT PRIMARY KEY, body TEXT, created REAL);
                 CREATE TABLE IF NOT EXISTS jobs (nzo_id TEXT PRIMARY KEY, body TEXT, created REAL);
+                CREATE TABLE IF NOT EXISTS bots (name TEXT PRIMARY KEY COLLATE NOCASE, removed INTEGER, created REAL);
                 """
             )
 
@@ -103,3 +104,32 @@ class Store:
                 (before,),
             )
             self._db.commit()
+
+    def seed_bots(self, names: list[str]) -> None:
+        """Add bots from BOTS that haven't been seen before. A bot removed by command stays removed."""
+        with self._lock:
+            self._db.executemany("INSERT OR IGNORE INTO bots VALUES (?, 0, ?)", [(n, time.time()) for n in names])
+            self._db.commit()
+
+    def bots(self) -> list[str]:
+        with self._lock:
+            rows = self._db.execute("SELECT name FROM bots WHERE removed = 0 ORDER BY created, name").fetchall()
+        return [r[0] for r in rows]
+
+    def add_bot(self, name: str) -> bool:
+        """Returns False if the bot was already in the list."""
+        with self._lock:
+            row = self._db.execute("SELECT removed FROM bots WHERE name = ?", (name,)).fetchone()
+            if row and not row[0]:
+                return False
+            self._db.execute("DELETE FROM bots WHERE name = ?", (name,))
+            self._db.execute("INSERT INTO bots VALUES (?, 0, ?)", (name, time.time()))
+            self._db.commit()
+        return True
+
+    def remove_bot(self, name: str) -> bool:
+        """Returns False if the bot wasn't in the list."""
+        with self._lock:
+            cur = self._db.execute("UPDATE bots SET removed = 1 WHERE name = ? AND removed = 0", (name,))
+            self._db.commit()
+        return cur.rowcount > 0
