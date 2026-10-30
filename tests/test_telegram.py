@@ -295,3 +295,16 @@ def test_reconnects_after_failed_shutdown(tmp_path, monkeypatch):
     assert src.ready and client.connects == 2
     # Without this Telegram never sends the account new messages, so commands go unanswered.
     assert client.invoked == ["GetState"]
+
+
+def test_clients_use_the_running_loop(tmp_path):
+    # Like create_app: the client is made before the server's event loop exists.
+    src = TelegramSource(Settings(api_id=1, api_hash="x", data_dir=str(tmp_path)))
+
+    async def check():
+        from bridge.telegram import _use_running_loop
+
+        _use_running_loop(src.client)
+        assert src.client.dispatcher.loop is asyncio.get_running_loop()
+
+    asyncio.run(check())
