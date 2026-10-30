@@ -18,6 +18,7 @@ from pyrogram import Client, errors, filters
 from pyrogram.handlers import MessageHandler
 from pyrogram.raw import functions
 from pyrogram.raw import types as raw
+from pyrogram.types import BotCommand
 
 from . import commands
 from .config import Settings
@@ -76,6 +77,16 @@ class TelegramSource:
         self._no_inline: dict[str, float] = {}  # bot -> skip inline mode until this time
         self._cache: dict[str, tuple[float, list[Release]]] = {}
         self._reconnect: asyncio.Task | None = None
+        # Optional bot (from @BotFather) that takes the same commands, so users don't message the account itself.
+        self.command_bot: Client | None = None
+        if settings.command_bot_token and store:
+            self.command_bot = Client(
+                "command-bot",
+                api_id=settings.api_id,
+                api_hash=settings.api_hash,
+                bot_token=settings.command_bot_token,
+                workdir=settings.data_dir,
+            )
 
     # ---- connection -------------------------------------------------------
 
@@ -95,6 +106,7 @@ class TelegramSource:
                     await self.client.invoke(functions.updates.GetState())
                     log.info("Telegram connected as %s", me.username or me.id)
                     self.ready = True
+                    await self._start_command_bot()
                     return
                 await self.client.disconnect()
                 log.warning("Telegram session is not logged in. Run: python -m bridge.login")
@@ -136,8 +148,22 @@ class TelegramSource:
             self._reconnect.cancel()
         if self.ready:
             await self.client.stop()
+        if self.command_bot and self.command_bot.is_connected:
+            await self.command_bot.stop()
 
     # ---- commands ---------------------------------------------------------
+
+    async def _start_command_bot(self) -> None:
+        bot = self.command_bot
+        if bot is None or bot.is_connected:
+            return
+        try:
+            await bot.start()
+            bot.add_handler(MessageHandler(self._on_command, filters.private & filters.text))
+            await bot.set_bot_commands([BotCommand(c, d) for c, d in commands.MENU])
+            log.info("Command bot running as @%s", bot.me.username)
+        except Exception as e:
+            log.error("Command bot failed to start, check COMMAND_BOT_TOKEN: %s", e)
 
     async def _on_command(self, client, msg) -> None:
         parsed = commands.parse(msg.text or "")
@@ -148,6 +174,9 @@ class TelegramSource:
         if not saved_messages and (msg.outgoing or not commands.is_allowed(user, self.s.allowed_users)):
             if not msg.outgoing:
                 log.info("Ignored %s from %s (not in ALLOWED_USERS)", parsed[0], user and (user.username or user.id))
+                if client is not None and client is self.command_bot and user:
+                    # Only the bot answers strangers: it tells them the id to add, nothing else.
+                    await msg.reply_text(f"You can't manage bots yet. Add your user id {user.id} to ALLOWED_USERS.")
             return
         reply = await commands.run(*parsed, self.store, self._check_bot)
         self.s.bots = self.store.bots()

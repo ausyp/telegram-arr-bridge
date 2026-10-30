@@ -40,6 +40,7 @@ from real Usenet.
    | `BRIDGE_API_KEY` | any long random string | Radarr uses it for both the indexer and the download client |
    | `BOTS` | `SomeMovieBot,OtherBot` | Bot usernames to search, without `@`, comma separated. You can add more later from Telegram (see "Adding bots from Telegram") |
    | `ALLOWED_USERS` | `123456789,myusername` | Telegram users who may add and remove bots, by user id or username |
+   | `COMMAND_BOT_TOKEN` | `123456:ABC-…` | Optional. Token of a bot you made with @BotFather, to send the commands to (see below) |
    | `DOWNLOADS_PATH` | `/srv/media/downloads` | Host folder for finished downloads (see "Paths" below) |
    | `PUID` / `PGID` | `1000` | User and group that own the downloaded files. Use the same ones as Radarr |
 
@@ -94,9 +95,15 @@ the bridge downloads whatever Radarr picks.
 
 ## Adding bots from Telegram
 
-You can change which bots are searched without redeploying. Send these to the
-bridge's Telegram account, either from a user listed in `ALLOWED_USERS` or from
-the bridge account itself in **Saved Messages**:
+You can change which bots are searched without redeploying. Send these
+commands from a user listed in `ALLOWED_USERS` to either:
+
+- **Your own command bot (recommended).** In Telegram, message
+  [@BotFather](https://t.me/BotFather), send `/newbot`, pick a name and a
+  username, and put the token it gives you in `COMMAND_BOT_TOKEN`. After a
+  redeploy, open your bot, press **Start**, and the commands appear in its menu.
+  If you aren't in `ALLOWED_USERS` yet, the bot replies with your user id.
+- **The bridge's Telegram account**, or that account's own **Saved Messages**.
 
 | Command | |
 |---|---|

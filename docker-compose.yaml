@@ -15,6 +15,7 @@ services:
       BRIDGE_API_KEY: ${BRIDGE_API_KEY}
       BOTS: ${BOTS}
       ALLOWED_USERS: ${ALLOWED_USERS:-}
+      COMMAND_BOT_TOKEN: ${COMMAND_BOT_TOKEN:-}
       COMPLETE_DIR: ${COMPLETE_DIR:-/downloads/complete}
       TZ: ${TZ:-UTC}
       # Same user and group as Radarr, so it can move and delete the files.
