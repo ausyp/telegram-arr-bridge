@@ -38,7 +38,8 @@ from real Usenet.
    | `API_ID` | `1234567` | From my.telegram.org |
    | `API_HASH` | `abcdef…` | From my.telegram.org |
    | `BRIDGE_API_KEY` | any long random string | Radarr uses it for both the indexer and the download client |
-   | `BOTS` | `SomeMovieBot,OtherBot` | Bot usernames to search, without `@`, comma separated |
+   | `BOTS` | `SomeMovieBot,OtherBot` | Bot usernames to search, without `@`, comma separated. You can add more later from Telegram (see "Adding bots from Telegram") |
+   | `ALLOWED_USERS` | `123456789,myusername` | Telegram users who may add and remove bots, by user id or username |
    | `DOWNLOADS_PATH` | `/srv/media/downloads` | Host folder for finished downloads (see "Paths" below) |
    | `PUID` / `PGID` | `1000` | User and group that own the downloaded files. Use the same ones as Radarr |
 
@@ -90,6 +91,25 @@ inside its container. Radarr must be able to reach that **same folder at the sam
 
 That's it. Requests from Overseerr go to Radarr, Radarr searches the bots, and
 the bridge downloads whatever Radarr picks.
+
+## Adding bots from Telegram
+
+You can change which bots are searched without redeploying. Send these to the
+bridge's Telegram account, either from a user listed in `ALLOWED_USERS` or from
+the bridge account itself in **Saved Messages**:
+
+| Command | |
+|---|---|
+| `/addbot SomeMovieBot` | Start searching a bot. `@SomeMovieBot` and `t.me/SomeMovieBot` work too, and you can list several |
+| `/removebot SomeMovieBot` | Stop searching it |
+| `/bots` | List the bots being searched |
+
+The bridge checks the username is really a bot before adding it, and the list is
+kept in `/data`, so it survives restarts. `BOTS` is only the starting list: bots
+in it are added the first time the bridge sees them, and a bot you removed with
+`/removebot` stays removed even if it's still in `BOTS`. Messages from anyone
+not in `ALLOWED_USERS` are ignored. To find your user id, message
+[@userinfobot](https://t.me/userinfobot).
 
 ## Joining channels
 

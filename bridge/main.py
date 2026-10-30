@@ -21,11 +21,14 @@ log = logging.getLogger("bridge")
 def create_app(settings: Settings, source=None) -> FastAPI:
     os.makedirs(settings.data_dir, exist_ok=True)
     os.makedirs(settings.complete_dir, exist_ok=True)
+    store = Store(os.path.join(settings.data_dir, "bridge.db"))
+    # BOTS seeds the list; after that, /addbot and /removebot change it (see commands.py).
+    store.seed_bots(settings.bots)
+    settings.bots = store.bots()
     if source is None:
         from .telegram import TelegramSource
 
-        source = TelegramSource(settings)
-    store = Store(os.path.join(settings.data_dir, "bridge.db"))
+        source = TelegramSource(settings, store=store)
     state = SimpleNamespace(settings=settings, store=store, source=source, downloads=None)
 
     async def prune_daily() -> None:
@@ -58,11 +61,12 @@ def main() -> None:
     settings = Settings.from_env()
     if not settings.api_id or not settings.api_hash:
         raise SystemExit("API_ID and API_HASH are required (get them at https://my.telegram.org/apps)")
-    if not settings.bots:
-        log.warning("BOTS is empty: searches will return nothing")
     if not settings.api_key:
         log.warning("BRIDGE_API_KEY is empty: the API is open to anyone who can reach it")
-    uvicorn.run(create_app(settings), host="0.0.0.0", port=int(os.environ.get("PORT", "8765")))
+    app = create_app(settings)
+    if not settings.bots:
+        log.warning("No bots to search: set BOTS or send /addbot to the Telegram account")
+    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", "8765")))
 
 
 if __name__ == "__main__":
