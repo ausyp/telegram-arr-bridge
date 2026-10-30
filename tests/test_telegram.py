@@ -251,3 +251,41 @@ def test_parallel_inline_downloads_get_their_own_files(tmp_path):
     slow, fast = asyncio.run(flow())
     assert os.path.basename(slow) == "SlowBot.mkv"
     assert os.path.basename(fast) == "FastBot.mkv"
+
+
+class StuckClient:
+    """A client whose session is revoked and whose shutdown fails part way."""
+
+    def __init__(self):
+        self.is_connected = self.is_initialized = False
+        self.connects = 0
+
+    async def connect(self):
+        if self.is_connected:
+            raise ConnectionError("Client is already connected")
+        self.connects += 1
+        self.is_connected = True
+        return True
+
+    async def initialize(self):
+        self.is_initialized = True
+
+    async def get_me(self):
+        if self.connects == 1:
+            raise errors.AuthKeyUnregistered()
+        return NS(username="me", id=1)
+
+    async def terminate(self):
+        raise RuntimeError("watchdog failed")
+
+    async def disconnect(self):
+        raise RuntimeError("session stop failed")
+
+
+def test_reconnects_after_failed_shutdown(tmp_path, monkeypatch):
+    real_sleep = asyncio.sleep
+    monkeypatch.setattr(asyncio, "sleep", lambda _: real_sleep(0))
+    client = StuckClient()
+    src = TelegramSource(Settings(data_dir=str(tmp_path)), client=client)
+    asyncio.run(src.connect_forever())
+    assert src.ready and client.connects == 2

@@ -94,19 +94,29 @@ class TelegramSource:
                     return
                 await self.client.disconnect()
                 log.warning("Telegram session is not logged in. Run: python -m bridge.login")
+            except errors.Unauthorized as e:
+                log.error("Telegram session was logged out (%s). Run: python -m bridge.login", e)
+                await self._reset_client()
             except Exception as e:
                 log.warning("Telegram connect failed: %s", e)
                 await self._reset_client()
             await asyncio.sleep(15)
 
     async def _reset_client(self) -> None:
+        """Get back to a disconnected client, even if shutting down part of it fails."""
         try:
             if self.client.is_initialized:
                 await self.client.terminate()
+        except Exception as e:
+            log.warning("Terminate: %s", e)
+            self.client.is_initialized = False
+        try:
             if self.client.is_connected:
                 await self.client.disconnect()
         except Exception as e:
-            log.debug("Disconnect: %s", e)
+            # Left marked as connected, every later connect() fails with "Client is already connected".
+            log.warning("Disconnect: %s", e)
+            self.client.is_connected = False
 
     async def _lost_auth(self, e: Exception) -> None:
         """The session was revoked or logged out: report it and wait for a new login."""
