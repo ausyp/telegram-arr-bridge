@@ -10,8 +10,10 @@ from types import SimpleNamespace
 import uvicorn
 from fastapi import FastAPI
 
+from .activity import EventLogHandler
 from .api import make_router
 from .config import Settings
+from .dashboard import make_dashboard
 from .downloads import Downloads
 from .store import Store
 
@@ -29,7 +31,7 @@ def create_app(settings: Settings, source=None) -> FastAPI:
         from .telegram import TelegramSource
 
         source = TelegramSource(settings, store=store)
-    state = SimpleNamespace(settings=settings, store=store, source=source, downloads=None)
+    state = SimpleNamespace(settings=settings, store=store, source=source, downloads=None, started=time.time())
 
     async def prune_daily() -> None:
         while True:
@@ -38,6 +40,9 @@ def create_app(settings: Settings, source=None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        events = EventLogHandler(store)
+        logging.getLogger("bridge").addHandler(events)
+        store.log_event("system", "Bridge started")
         state.downloads = Downloads(settings, store, source)
         state.downloads.resume()
         tasks = [asyncio.create_task(source.connect_forever()), asyncio.create_task(prune_daily())]
@@ -45,9 +50,11 @@ def create_app(settings: Settings, source=None) -> FastAPI:
         for t in tasks:
             t.cancel()
         await source.stop()
+        logging.getLogger("bridge").removeHandler(events)
 
     app = FastAPI(title="Telegram Arr Bridge", lifespan=lifespan)
     app.include_router(make_router(state))
+    app.include_router(make_dashboard(state))
     app.state.bridge = state
     return app
 

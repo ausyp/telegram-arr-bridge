@@ -130,3 +130,43 @@ def test_dot_names_cannot_escape_the_folder(client, tmp_path):
     assert hist[0]["storage"] == str(tmp_path / "complete" / "download" / "download")
     client.get(f"/api?mode=history&name=delete&value={nzo}&del_files=1&apikey=k")
     assert os.path.isdir(tmp_path / "complete")
+
+
+def test_dashboard_shows_status_and_activity(client):
+    assert "Telegram Arr Bridge" in client.get("/").text
+    assert client.get("/dashboard/status").status_code == 401
+    assert client.get("/dashboard/events?apikey=nope").status_code == 401
+
+    client.get("/api?t=movie&q=Aaru&apikey=k", headers={"User-Agent": "Radarr/5.0"})
+    client.get("/api?mode=addurl&name=http://x/api?id=abc123&cat=radarr&apikey=k")
+    for _ in range(50):
+        status = client.get("/dashboard/status", headers={"X-Api-Key": "k"}).json()
+        if status["finished"]:
+            break
+        time.sleep(0.05)
+    assert status["telegram"]["connected"] is True
+    assert status["day"] == {"searches": 1, "grabs": 1, "completed": 1, "failed": 0, "problems": 0}
+    assert status["bots"] == [{"name": "SomeBot", "results": 1, "hits": 1}]
+    assert status["finished"][0]["status"] == "Completed"
+
+    events = client.get("/dashboard/events?apikey=k").json()["events"]
+    assert [e["kind"] for e in events] == ["download", "grab", "search", "system"]
+    search = events[2]
+    assert search["text"] == 'Searched "Aaru": 1 result'
+    assert search["data"]["client"] == "Radarr" and search["data"]["bots"] == {"SomeBot": 1}
+
+    only = client.get(f"/dashboard/events?kind=search&apikey=k&after={events[3]['id']}").json()["events"]
+    assert [e["id"] for e in only] == [search["id"]]
+    older = client.get(f"/dashboard/events?apikey=k&before={search['id']}").json()["events"]
+    assert [e["kind"] for e in older] == ["system"]
+
+
+def test_dashboard_logs_warnings(client):
+    import logging
+
+    for _ in range(3):
+        logging.getLogger("bridge.telegram").warning("Telegram connect failed: %s", "boom")
+    problems = client.get("/dashboard/events?kind=error&apikey=k").json()["events"]
+    assert [(e["kind"], e["level"], e["text"]) for e in problems] == [
+        ("telegram", "warning", "Telegram connect failed: boom")
+    ]

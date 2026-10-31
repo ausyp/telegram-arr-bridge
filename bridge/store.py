@@ -1,4 +1,4 @@
-"""SQLite store for search results (releases), download jobs and the bots to search."""
+"""SQLite store for search results (releases), download jobs, the bots to search, and the activity log."""
 
 import json
 import sqlite3
@@ -45,6 +45,10 @@ class Store:
                 CREATE TABLE IF NOT EXISTS releases (guid TEXT PRIMARY KEY, body TEXT, created REAL);
                 CREATE TABLE IF NOT EXISTS jobs (nzo_id TEXT PRIMARY KEY, body TEXT, created REAL);
                 CREATE TABLE IF NOT EXISTS bots (name TEXT PRIMARY KEY COLLATE NOCASE, removed INTEGER, created REAL);
+                CREATE TABLE IF NOT EXISTS events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL, kind TEXT, level TEXT, text TEXT, data TEXT
+                );
+                CREATE INDEX IF NOT EXISTS events_kind ON events (kind, id);
                 """
             )
 
@@ -103,6 +107,7 @@ class Store:
                 " AND guid NOT IN (SELECT json_extract(body, '$.guid') FROM jobs)",
                 (before,),
             )
+            self._db.execute("DELETE FROM events WHERE ts < ?", (before,))
             self._db.commit()
 
     def seed_bots(self, names: list[str]) -> None:
@@ -133,3 +138,47 @@ class Store:
             cur = self._db.execute("UPDATE bots SET removed = 1 WHERE name = ? AND removed = 0", (name,))
             self._db.commit()
         return cur.rowcount > 0
+
+    # ---- activity log (shown on the dashboard) ----------------------------
+
+    def log_event(self, kind: str, text: str, level: str = "info", **data) -> None:
+        """kind: search, grab, download, command, telegram or system. level: info, warning or error."""
+        with self._lock:
+            self._db.execute(
+                "INSERT INTO events (ts, kind, level, text, data) VALUES (?, ?, ?, ?, ?)",
+                (time.time(), kind, level, text, json.dumps(data)),
+            )
+            self._db.commit()
+
+    def events(self, limit: int = 100, before: int = 0, after: int = 0, kind: str = "") -> list[dict]:
+        """Newest first. `before`/`after` are event ids, for paging back and for polling new ones."""
+        where, args = ["id > ?"], [after]
+        if before:
+            where.append("id < ?")
+            args.append(before)
+        if kind == "error":
+            where.append("level != 'info'")
+        elif kind:
+            where.append("kind = ?")
+            args.append(kind)
+        with self._lock:
+            rows = self._db.execute(
+                f"SELECT id, ts, kind, level, text, data FROM events WHERE {' AND '.join(where)}"
+                " ORDER BY id DESC LIMIT ?",
+                (*args, limit),
+            ).fetchall()
+        return [
+            {"id": i, "ts": ts, "kind": k, "level": lv, "text": t, "data": json.loads(d or "{}")}
+            for i, ts, k, lv, t, d in rows
+        ]
+
+    def event_counts(self, since: float) -> dict[str, int]:
+        """Events per kind since `since`, plus "error" for warnings and errors."""
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT kind, COUNT(*) FROM events WHERE ts >= ? AND level = 'info' GROUP BY kind", (since,)
+            ).fetchall()
+            errors = self._db.execute(
+                "SELECT COUNT(*) FROM events WHERE ts >= ? AND level != 'info'", (since,)
+            ).fetchone()[0]
+        return {**dict(rows), "error": errors}

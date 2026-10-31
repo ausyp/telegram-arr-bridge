@@ -49,6 +49,7 @@ class Downloads:
             size=rel.size,
         )
         self.store.put_job(job)
+        self.store.log_event("grab", f"Grabbed {job.name}", nzo_id=job.nzo_id, bot=rel.bot, category=job.category)
         self._start(job)
         return job.nzo_id
 
@@ -81,6 +82,10 @@ class Downloads:
                 shutil.rmtree(tmp, ignore_errors=True)
                 job.status, job.path, job.done = "Completed", dest, job.size
                 log.info("Finished %s -> %s", job.name, final)
+                took = int(time.time() - job.created)
+                self.store.log_event(
+                    "download", f"Downloaded {job.name}", nzo_id=job.nzo_id, bot=rel.bot, size=job.size, seconds=took
+                )
             except asyncio.CancelledError:
                 shutil.rmtree(tmp, ignore_errors=True)
                 raise
@@ -113,6 +118,8 @@ class Downloads:
             task.cancel()
         job = self.get(nzo_id)
         self._live.pop(nzo_id, None)
+        if job and job.status in ("Queued", "Downloading"):
+            self.store.log_event("download", f"Cancelled {job.name}", nzo_id=nzo_id)
         if job and delete_files and self._is_job_folder(job.path):
             shutil.rmtree(job.path, ignore_errors=True)
         self.store.delete_job(nzo_id)
