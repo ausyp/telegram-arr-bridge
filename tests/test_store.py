@@ -27,3 +27,12 @@ def test_safe_name():
     assert safe_name(".") == "download"
     assert safe_name("a/../b") == "a .. b"
     assert safe_name("Movie (2026) 720p") == "Movie (2026) 720p"
+
+
+def test_events_are_pruned(tmp_path):
+    store = Store(str(tmp_path / "db"))
+    store.log_event("search", "old")
+    store._db.execute("UPDATE events SET ts = ?", (time.time() - 90 * 86400,))
+    store.log_event("search", "new", query="q")
+    store.prune(before=time.time() - 30 * 86400)
+    assert [(e["text"], e["data"]) for e in store.events()] == [("new", {"query": "q"})]

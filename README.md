@@ -60,6 +60,21 @@ from real Usenet.
 Check it's up at `http://<docker-host>:8765/health`. It shows
 `"telegram": true` once you're logged in.
 
+## Dashboard
+
+Open `http://<docker-host>:8765/` in a browser. It asks for your `BRIDGE_API_KEY`
+once (saved in that browser), then shows, updating every few seconds:
+
+- whether Telegram and the command bot are connected
+- today's searches, grabs, finished and failed downloads, and warnings
+- downloads in progress, and recent finished or failed ones
+- each bot being searched and how many results it gave today
+- an activity log: every search from Radarr/Sonarr (with the results per bot),
+  grabs, downloads, /addbot and /removebot commands, connection changes and errors
+
+The activity log is kept in `/data/bridge.db`, so it survives restarts, and is
+trimmed after `HISTORY_DAYS`.
+
 ## Paths (important)
 
 The bridge saves finished files to `/downloads/complete/<category>/<release>/`
@@ -157,7 +172,7 @@ channels once by hand from the same Telegram account.
 | `PUID` / `PGID` | `1000` | User and group the app runs as and that own downloaded files |
 | `UMASK` | `002` | Permissions mask for new files and folders |
 | `RSS_MAX_AGE_HOURS` | `24` | Only search results newer than this appear in Radarr's RSS feed |
-| `HISTORY_DAYS` | `30` | Finished downloads and unused search results older than this are removed daily |
+| `HISTORY_DAYS` | `30` | Finished downloads, unused search results and dashboard activity older than this are removed daily |
 | `LOG_LEVEL` | `INFO` | `DEBUG` for more detail |
 
 ## Development

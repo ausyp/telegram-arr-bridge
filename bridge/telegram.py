@@ -115,6 +115,7 @@ class TelegramSource:
                     # Telegram only pushes new messages (our commands) after this call; start() would make it.
                     await self.client.invoke(functions.updates.GetState())
                     log.info("Telegram connected as %s", me.username or me.id)
+                    self._event("telegram", f"Connected to Telegram as {self.account}")
                     self.ready = True
                     await self._start_command_bot()
                     return
@@ -153,6 +154,20 @@ class TelegramSource:
         await self._reset_client()
         self._reconnect = asyncio.create_task(self.connect_forever())
 
+    @property
+    def account(self) -> str:
+        me = getattr(self.client, "me", None)
+        return f"@{me.username}" if me and me.username else str(me.id) if me else ""
+
+    @property
+    def command_bot_name(self) -> str:
+        me = getattr(self.command_bot, "me", None) if self.command_bot and self.command_bot.is_connected else None
+        return f"@{me.username}" if me else ""
+
+    def _event(self, kind: str, text: str, level: str = "info", **data) -> None:
+        if self.store:
+            self.store.log_event(kind, text, level, **data)
+
     async def stop(self) -> None:
         if self._reconnect:
             self._reconnect.cancel()
@@ -173,6 +188,7 @@ class TelegramSource:
             bot.add_handler(MessageHandler(self._on_command, filters.private & filters.text))
             await bot.set_bot_commands([BotCommand(c, d) for c, d in commands.MENU])
             log.info("Command bot running as @%s", bot.me.username)
+            self._event("telegram", f"Command bot running as @{bot.me.username}")
         except Exception as e:
             log.error("Command bot failed to start, check COMMAND_BOT_TOKEN: %s", e)
 
@@ -184,12 +200,16 @@ class TelegramSource:
         saved_messages = msg.outgoing and user and msg.chat.id == user.id
         if not saved_messages and (msg.outgoing or not commands.is_allowed(user, self.s.allowed_users)):
             if not msg.outgoing:
-                log.info("Ignored %s from %s (not in ALLOWED_USERS)", parsed[0], user and (user.username or user.id))
+                who = user and (user.username or user.id)
+                log.info("Ignored %s from %s (not in ALLOWED_USERS)", parsed[0], who)
+                self._event("command", f"Ignored /{parsed[0]} from {who} (not in ALLOWED_USERS)", "warning")
                 if client is not None and client is self.command_bot and user:
                     # Only the bot answers strangers: it tells them the id to add, nothing else.
                     await msg.reply_text(f"You can't manage bots yet. Add your user id {user.id} to ALLOWED_USERS.")
             return
         reply = await commands.run(*parsed, self.store, self._check_bot)
+        who = "Saved Messages" if saved_messages else f"@{user.username}" if user.username else str(user.id)
+        self._event("command", f"/{' '.join([parsed[0], *parsed[1]])} from {who}", reply=reply)
         self.s.bots = self.store.bots()
         self._cache.clear()
         await msg.reply_text(reply, quote=True)

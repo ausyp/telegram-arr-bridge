@@ -95,6 +95,24 @@ def make_router(app_state) -> APIRouter:
             headers={"Content-Disposition": f'attachment; filename="{rel.guid}.nzb"'},
         )
 
+    def log_search(request: Request, q: str, releases, seconds: float) -> None:
+        per_bot: dict[str, int] = {}
+        for r in releases:
+            per_bot[r.bot] = per_bot.get(r.bot, 0) + 1
+        agent = request.headers.get("user-agent", "")
+        client = next((c for c in ("Radarr", "Sonarr", "Prowlarr") if c.lower() in agent.lower()), "")
+        n = len(releases)
+        app_state.store.log_event(
+            "search",
+            f'Searched "{q}": {n} result{"" if n == 1 else "s"}',
+            query=q,
+            results=n,
+            bots=per_bot,
+            titles=[r.title for r in releases[:20]],
+            seconds=round(seconds, 1),
+            client=client,
+        )
+
     async def newznab(request: Request, params) -> Response:
         if not authorized(params):
             return _error(100, "Incorrect user credentials")
@@ -110,9 +128,11 @@ def make_router(app_state) -> APIRouter:
             if int(params.get("offset") or 0) > 0 or not wants_movies(params):
                 return feed([])  # everything is returned on the first page
             if q:
+                started = time.time()
                 releases = await app_state.source.search(q)
                 for r in releases:
                     app_state.store.put_release(r)
+                log_search(request, q, releases, time.time() - started)
             else:
                 # RSS: Radarr polls this and tests the indexer with it.
                 # Old callback buttons have usually expired, so only offer recent results.
